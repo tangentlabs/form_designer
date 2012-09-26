@@ -252,6 +252,7 @@ class FormContent(models.Model):
         formcontent = request.POST.get('_formcontent')
 
         if request.method == 'POST' and (not formcontent or formcontent == unicode(self.id)):
+            form_class.base_fields['customer_id'] = forms.CharField()
             form_instance = form_class(request.POST, prefix=prefix)
 
             if form_instance.is_valid():
