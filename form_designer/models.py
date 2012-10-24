@@ -10,8 +10,6 @@ from django.utils.datastructures import SortedDict
 from django.utils.functional import curry
 from django.utils.translation import ugettext_lazy as _
 
-from form_designer.utils import JSONFieldDescriptor
-
 
 def create_form_submission(model_instance, form_instance, request, **kwargs):
     return FormSubmission.objects.create(
@@ -20,34 +18,18 @@ def create_form_submission(model_instance, form_instance, request, **kwargs):
         path=request.path)
 
 
-def send_as_mail(model_instance, form_instance, request, config, **kwargs):
+def send_as_mail(model_instance, form_instance, request, **kwargs):
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
 
     send_mail(model_instance.title, submission.formatted_data(),
               settings.DEFAULT_FROM_EMAIL,
-              [config['email']], fail_silently=True)
+              [model_instance.recipient], fail_silently=True)
     return _('Thank you, your input has been received.')
 
 
 class Form(models.Model):
-    CONFIG_OPTIONS = [
-        ('save_fs', {
-            'title': _('Save form submission'),
-            'process': create_form_submission,
-        }),
-        ('email', {
-            'title': _('E-mail'),
-            'form_fields': [
-                ('email', forms.EmailField(_('e-mail address'))),
-            ],
-            'process': send_as_mail,
-        }),
-    ]
-
     title = models.CharField(_('title'), max_length=100)
-
-    config_json = models.TextField(_('config'), blank=True)
-    config = JSONFieldDescriptor('config_json')
+    recipient = models.CharField(_('recipient'), max_length=100, default="")
 
     class Meta:
         verbose_name = _('form')
@@ -65,42 +47,13 @@ class Form(models.Model):
         for field in self.fields.all():
             field.add_formfield(fields, self)
 
-        validators = []
-        cfg = dict(self.CONFIG_OPTIONS)
-        for key, config in self.config.items():
-            try:
-                validators.append(cfg[key]['validate'])
-            except KeyError:
-                pass
-
-        class Form(forms.Form):
-            def clean(self):
-                data = super(Form, self).clean()
-                for validator in validators:
-                    validator(self, data)
-                return data
-
-        return type('Form%s' % self.pk, (Form,), fields)
+        return type('Form%s' % self.pk, (forms.Form,), fields)
 
     def process(self, form, request):
-        ret = {}
-        cfg = dict(self.CONFIG_OPTIONS)
-
-        for key, config in self.config.items():
-            try:
-                process = cfg[key]['process']
-            except KeyError:
-                # ignore configs without process methods
-                continue
-
-            ret[key] = process(
-                model_instance=self,
-                form_instance=form,
-                request=request,
-                config=config)
-
-        return ret
-
+        return send_as_mail(
+            model_instance=self,
+            form_instance=form,
+            request=request)
 
 class FormField(models.Model):
     FIELD_TYPES = [
