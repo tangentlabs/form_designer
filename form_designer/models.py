@@ -1,3 +1,4 @@
+import re
 from django import forms
 from django.conf import settings
 from django.core.mail import send_mail
@@ -20,16 +21,17 @@ def create_form_submission(model_instance, form_instance, request, **kwargs):
 
 def send_as_mail(model_instance, form_instance, request, **kwargs):
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
+    recipients = re.split('[,; ]+', model_instance.recipient)
 
     send_mail(model_instance.title, submission.formatted_data(),
               settings.DEFAULT_FROM_EMAIL,
-              [model_instance.recipient], fail_silently=True)
+              recipients, fail_silently=True)
     return _('Thank you, your input has been received.')
 
 
 class Form(models.Model):
     title = models.CharField(_('title'), max_length=100)
-    recipient = models.CharField(_('recipient'), max_length=100, default="")
+    recipient = models.CharField(_('Recipients'), max_length=100, default="")
 
     class Meta:
         verbose_name = _('form')
