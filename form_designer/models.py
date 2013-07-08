@@ -10,6 +10,13 @@ from django.template.defaultfilters import slugify
 from django.utils.datastructures import SortedDict
 from django.utils.functional import curry
 from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import ugettext
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+
+
+def split_emails(value):
+    return re.split('[,;\s]+', value)
 
 
 def create_form_submission(model_instance, form_instance, request, **kwargs):
@@ -21,7 +28,7 @@ def create_form_submission(model_instance, form_instance, request, **kwargs):
 
 def send_as_mail(model_instance, form_instance, request, **kwargs):
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
-    recipients = re.split('[,; ]+', model_instance.recipient)
+    recipients = split_emails(model_instance.recipient)
 
     send_mail(model_instance.title, submission.formatted_data(),
               settings.DEFAULT_FROM_EMAIL,
@@ -29,9 +36,20 @@ def send_as_mail(model_instance, form_instance, request, **kwargs):
     return _('Thank you, your input has been received.')
 
 
+def validate_multiple_emails(value):
+    for email in split_emails(value):
+        try:
+            validate_email(email)
+        except ValidationError:
+            msg = ugettext('"{0}" is not a valid email address.')
+            raise ValidationError(msg.format(email))
+
+
 class Form(models.Model):
     title = models.CharField(_('title'), max_length=100)
-    recipient = models.CharField(_('Recipients'), max_length=100, default="")
+    recipient = models.TextField(_('Recipients'), default="",
+                                 help_text=_("Comma separated list of recipients"),
+                                 validators=[validate_multiple_emails])
 
     class Meta:
         verbose_name = _('form')
