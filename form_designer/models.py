@@ -1,12 +1,14 @@
 import re
+
 from django import forms
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMessage
 from django.db import models
 from django.db.models.fields import BLANK_CHOICE_DASH
 from django.template import RequestContext
 from django.template.loader import render_to_string
 from django.template.defaultfilters import slugify
+from django.template.defaultfilters import filesizeformat
 from django.utils.datastructures import SortedDict
 from django.utils.functional import curry
 from django.utils.translation import ugettext_lazy as _
@@ -26,13 +28,53 @@ def create_form_submission(model_instance, form_instance, request, **kwargs):
         path=request.path)
 
 
+def remove_attachment_data(form_instance):
+    """ Remove uploaded files from the form. """
+    attachment_fields = [
+        field for field in form_instance.fields if isinstance(
+            form_instance.fields[field], forms.FileField
+        )
+    ]
+    for field in attachment_fields:
+        form_instance.fields.pop(field)
+        form_instance.cleaned_data.pop(field)
+
+    return form_instance
+
+
 def send_as_mail(model_instance, form_instance, request, **kwargs):
+    # Don't save user uploaded data in the DB, only attach it to the email
+    form_instance = remove_attachment_data(form_instance)
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
+    attachments = request.FILES.values()
+    # TODO: Validation of total attachments size
+    # if attachments:
+    #     max_total_upload_size = 1048576
+    #     total_attachments_size = sum([uploaded_file._size for uploaded_file in attachments])
+    #     if total_attachments_size > max_total_upload_size:
+    #         raise forms.ValidationError(
+    #             _('Maximum allowed filesize: %s. Current filesize: %s.') % (
+    #                 filesizeformat(max_total_upload_size),
+    #                 filesizeformat(total_attachments_size)
+    #             )
+    #         )
     recipients = split_emails(model_instance.recipient)
 
-    send_mail(model_instance.title, submission.formatted_data(),
-              settings.DEFAULT_FROM_EMAIL,
-              recipients, fail_silently=True)
+    mail = EmailMessage(
+        model_instance.title,
+        submission.formatted_data(),
+        settings.DEFAULT_FROM_EMAIL,
+        recipients
+    )
+
+    for attachment in attachments:
+        mail.attach(
+            attachment.name,
+            attachment.read(),
+            attachment.content_type
+        )
+
+    mail.send(fail_silently=True)
     return _('Thank you, your input has been received.')
 
 
@@ -62,7 +104,7 @@ class Form(models.Model):
         fields = SortedDict((
             ('required_css_class', 'required'),
             ('error_css_class', 'error'),
-            ))
+        ))
 
         for field in self.fields.all():
             field.add_formfield(fields, self)
@@ -75,23 +117,84 @@ class Form(models.Model):
             form_instance=form,
             request=request)
 
+
+class FormAdminForm(forms.ModelForm):
+    """ AdminForm to add validation for the number of attachment
+    fields when creating the form. """
+    class Meta:
+        model = Form
+
+    def clean(self):
+        number_of_attachment_fields = len(
+            [val for val in self.data.values() if val == 'attachment']
+        )
+        if number_of_attachment_fields > 3:
+            raise forms.ValidationError(
+                _('Maximum 3 attachment fields allowed.')
+            )
+
+        return self.cleaned_data
+
+
+class RestrictedFileField(forms.FileField):
+    """ FileField restricted to specified filetypes and file size. """
+
+    def __init__(self, *args, **kwargs):
+        # MIME types, keys only used for validation error message
+        self.content_types = {
+            'JPEG': 'image/jpeg',
+            'GIF': 'image/gif',
+            'TIFF': 'image/tiff',
+            'PDF': 'application/pdf',
+            'DOC': 'application/msword',
+            'DOCX': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'XLS': 'application/vnd.ms-excel',
+            'XLSX': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        }
+
+        # 1 MB = 1048576
+        self.max_upload_size = 5242880
+
+        super(RestrictedFileField, self).__init__(*args, **kwargs)
+
+    def clean(self, *args, **kwargs):
+        uploaded_file = super(RestrictedFileField, self).clean(*args, **kwargs)
+
+        if uploaded_file:
+            if uploaded_file.content_type in self.content_types.values():
+                if uploaded_file._size > self.max_upload_size:
+                    raise forms.ValidationError(
+                        _('Maximum allowed filesize: %s. Current filesize: %s.') % (
+                            filesizeformat(self.max_upload_size),
+                            filesizeformat(uploaded_file._size)
+                        )
+                    )
+            else:
+                raise forms.ValidationError(
+                    _('Filetype not supported.\n Supported filetypes: %s') % ', '.join(self.content_types.keys())
+                )
+
+        return uploaded_file
+
+
 class FormField(models.Model):
     FIELD_TYPES = [
         ('text', _('text'), forms.CharField),
         ('email', _('e-mail address'), forms.EmailField),
+        ('attachment', _('attachment'),
+            curry(RestrictedFileField, required=False)),
         ('longtext', _('long text'),
-         curry(forms.CharField, widget=forms.Textarea)),
+            curry(forms.CharField, widget=forms.Textarea)),
         ('checkbox', _('checkbox'), curry(forms.BooleanField, required=False)),
         ('select', _('select'), curry(forms.ChoiceField, required=False)),
         ('radio', _('radio'),
-         curry(forms.ChoiceField, widget=forms.RadioSelect)),
+            curry(forms.ChoiceField, widget=forms.RadioSelect)),
         ('multiple-select', _('multiple select'),
-         curry(forms.MultipleChoiceField, widget=forms.CheckboxSelectMultiple)),
+            curry(forms.MultipleChoiceField, widget=forms.CheckboxSelectMultiple)),
         ('hidden', _('hidden'), curry(forms.CharField, widget=forms.HiddenInput)),
     ]
 
-    form = models.ForeignKey(Form, related_name='fields',
-        verbose_name=_('form'))
+    form = models.ForeignKey(Form, related_name='fields', verbose_name=_('form'))
     ordering = models.IntegerField(_('ordering'), default=0)
 
     title = models.CharField(_('title'), max_length=100)
@@ -126,7 +229,7 @@ class FormField(models.Model):
     def get_choices(self):
         get_tuple = lambda value: (slugify(value.strip()), value.strip())
         choices = [get_tuple(value) for value in self.choices.split(',')]
-        if not self.is_required and self.type=='select':
+        if not self.is_required and self.type == 'select':
             choices = BLANK_CHOICE_DASH + choices
         return tuple(choices)
 
@@ -210,6 +313,7 @@ class FormContent(models.Model):
         verbose_name = _('form')
         verbose_name_plural = _('forms')
 
+
     def process_valid_form(self, request, form_instance, **kwargs):
         """ Process form and return response (hook method). """
         process_result = self.form.process(form_instance, request)
@@ -226,7 +330,7 @@ class FormContent(models.Model):
 
         if request.method == 'POST' and (not formcontent or formcontent == unicode(self.id)):
             form_class.base_fields['customer_id'] = forms.CharField()
-            form_instance = form_class(request.POST, prefix=prefix)
+            form_instance = form_class(request.POST, request.FILES, prefix=prefix)
 
             if form_instance.is_valid():
                 return self.process_valid_form(request, form_instance, **kwargs)
