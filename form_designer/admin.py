@@ -11,6 +11,7 @@ class FormFieldAdmin(admin.TabularInline):
 
 
 class FormAdmin(admin.ModelAdmin):
+    form = models.FormAdminForm
     inlines = [FormFieldAdmin]
     list_display = ('title',)
 
