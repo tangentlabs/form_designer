@@ -47,17 +47,6 @@ def send_as_mail(model_instance, form_instance, request, **kwargs):
     form_instance = remove_attachment_data(form_instance)
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
     attachments = request.FILES.values()
-    # TODO: Validation of total attachments size
-    # if attachments:
-    #     max_total_upload_size = 1048576
-    #     total_attachments_size = sum([uploaded_file._size for uploaded_file in attachments])
-    #     if total_attachments_size > max_total_upload_size:
-    #         raise forms.ValidationError(
-    #             _('Maximum allowed filesize: %s. Current filesize: %s.') % (
-    #                 filesizeformat(max_total_upload_size),
-    #                 filesizeformat(total_attachments_size)
-    #             )
-    #         )
     recipients = split_emails(model_instance.recipient)
 
     mail = EmailMessage(
@@ -153,7 +142,7 @@ class RestrictedFileField(forms.FileField):
         }
 
         # 1 MB = 1048576
-        self.max_upload_size = 5242880
+        self.max_upload_size = 10485760
 
         super(RestrictedFileField, self).__init__(*args, **kwargs)
 
