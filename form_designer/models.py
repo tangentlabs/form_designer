@@ -28,23 +28,8 @@ def create_form_submission(model_instance, form_instance, request, **kwargs):
         path=request.path)
 
 
-def remove_attachment_data(form_instance):
-    """ Remove uploaded files from the form. """
-    attachment_fields = [
-        field for field in form_instance.fields if isinstance(
-            form_instance.fields[field], forms.FileField
-        )
-    ]
-    for field in attachment_fields:
-        form_instance.fields.pop(field)
-        form_instance.cleaned_data.pop(field)
-
-    return form_instance
-
-
 def send_as_mail(model_instance, form_instance, request, **kwargs):
     # Don't save user uploaded data in the DB, only attach it to the email
-    form_instance = remove_attachment_data(form_instance)
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
     attachments = request.FILES.values()
     recipients = split_emails(model_instance.recipient)
@@ -163,7 +148,8 @@ class RestrictedFileField(forms.FileField):
                     _('Filetype not supported.\n Supported filetypes: %s') % ', '.join(self.content_types.keys())
                 )
 
-        return uploaded_file
+        # Return only the filename, actual file is retrieved from request
+        return uploaded_file.name
 
 
 class FormField(models.Model):
@@ -301,7 +287,6 @@ class FormContent(models.Model):
         abstract = True
         verbose_name = _('form')
         verbose_name_plural = _('forms')
-
 
     def process_valid_form(self, request, form_instance, **kwargs):
         """ Process form and return response (hook method). """
