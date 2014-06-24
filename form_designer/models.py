@@ -29,8 +29,8 @@ def create_form_submission(model_instance, form_instance, request, **kwargs):
 
 
 def send_as_mail(model_instance, form_instance, request, **kwargs):
-    # Don't save user uploaded data in the DB, only attach it to the email
     submission = create_form_submission(model_instance, form_instance, request, **kwargs)
+    # Only filename of the uploaded file is saved into db
     attachments = request.FILES.values()
     recipients = split_emails(model_instance.recipient)
 
